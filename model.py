@@ -305,9 +305,7 @@ class UnSuperPoint(nn.Module):
     def get_point_pair(self, G, As, Bs):
         A2B_min_Id = torch.argmin(G, dim=2)
         B, M = A2B_min_Id.shape[0:2]
-        Id = torch.nn.functional.grid_sample(G.unsqueeze(1), 
-            torch.stack([torch.arange(M).reshape(1, M).repeat(B, 1).to(self.dev), A2B_min_Id],
-                dim=2).unsqueeze(2).float())
+        Id = G.gather(2, A2B_min_Id.reshape(B, -1, 1))
         Id = Id.squeeze() <= self.correspond
         return A2B_min_Id, Id
 
