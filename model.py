@@ -402,44 +402,6 @@ class UnSuperPoint(nn.Module):
         desc = desc[:, ~toremove]
         return pts[:, :300], desc[:, :300]
 
-    # TODO: No more need; eliminate this part
-    def predict(self, srcipath, transformpath, output_dir):
-        srcimg = cv2.imread(srcipath)
-        srcimg_copy = Image.fromarray(cv2.cvtColor(srcimg, cv2.COLOR_BGR2RGB))
-        transformimg = cv2.imread(transformpath)
-        transformimg_copy = Image.fromarray(cv2.cvtColor(transformimg, cv2.COLOR_BGR2RGB))
-        srcimg_copy = transform_test(srcimg_copy)
-        transformimg_copy = transform_test(transformimg_copy)
-
-        srcimg_copy = torch.unsqueeze(srcimg_copy, 0)
-        transformimg_copy = torch.unsqueeze(transformimg_copy, 0)
-
-        srcimg_copy = srcimg_copy.to(self.dev)
-        transformimg_copy = transformimg_copy.to(self.dev)
-        As,Ap,Ad = self.forward(srcimg_copy)
-        Bs,Bp,Bd = self.forward(transformimg_copy)
-
-        h, mask, points1, points2 = self.get_homography(Ap[0], Ad[0], Bp[0], Bd[0], As[0],Bs[0])
-        im1Reg = cv2.warpPerspective(srcimg, h, (self.w, self.h))
-        print(h)
-
-        # Visualize the points
-        point_size = 1
-        thickness = 4 # 0, 4, 8
-        def random_color():
-            return (random.randint(0,255), random.randint(0,255),random.randint(0,255))
-
-        points_list = [(int(points1[i,0]),int(points1[i,1])) for i in range(len(points1))]
-        points_list_dst = [(int(points2[i,0]),int(points2[i,1])) for i in range(len(points2))]
-        for i, point in enumerate(points_list):
-            color = random_color()
-            cv2.circle(srcimg , point, point_size, color, thickness)
-            cv2.circle(transformimg , points_list_dst[i], point_size, color, thickness)
-
-        cv2.imwrite(os.path.join(output_dir, 'visualization_src.jpg'), srcimg)
-        cv2.imwrite(os.path.join(output_dir, 'visualization_dst.jpg'), transformimg)
-        cv2.imwrite(os.path.join(output_dir, 'visualization_s2d.jpg'), im1Reg)
-        
     def get_homography(self, Ap, Ad, Bp, Bd, As, Bs):
         Amap = self.get_position(Ap)
         Bmap = self.get_position(Bp)

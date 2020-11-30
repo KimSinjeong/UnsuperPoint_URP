@@ -64,6 +64,14 @@ class CocoNutV2(Coco):
         inv_mat1 = torch.inverse(mat1)
         des_img = inv_warp_image(source_img, inv_mat1).squeeze(0)
 
+        if torch.isnan(source_img).any():
+            print("NAN is corrected in src image")
+            des_img[torch.isnan(source_img)] = 0.
+
+        if torch.isnan(des_img).any():
+            print("NAN is corrected in des image")
+            des_img[torch.isnan(des_img)] = 0.
+
         return source_img, des_img, mat1
 
     def generate_mask(self, size = [240, 320]):
