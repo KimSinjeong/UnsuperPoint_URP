@@ -31,7 +31,8 @@ class CocoNut(Coco):
         tran_img1 = self.EnhanceData(re_img1)
         tran_img2 = self.EnhanceData(re_img2)
 
-        mask = self.generate_mask(self.config['resize'])
+        #mask = self.generate_mask(self.config['resize'])
+        mask = self.square_mask(self.config['resize'])
         bmask = torch.ones(self.config['resize'], dtype=torch.float32)
 
         if self.transforms:
@@ -61,6 +62,14 @@ class CocoNut(Coco):
 
         des_img = bmask*(cmask*tran_img1 + mask*tran_img2)
 
+        if torch.isnan(source_img).any():
+            print("NAN is corrected in src image")
+            des_img[torch.isnan(source_img)] = 0.
+
+        if torch.isnan(des_img).any():
+            print("NAN is corrected in des image")
+            des_img[torch.isnan(des_img)] = 0.
+
         return source_img, des_img, mat1
 
     def generate_mask(self, size = [240, 320]):
@@ -80,6 +89,36 @@ class CocoNut(Coco):
                             int(length * math.sin(direction)) + pts[j][1])
 
                 pts.append(vector)
+
+            # Draw a polygon
+            cv2.fillPoly(mask, [np.array(pts, np.int32)], (255, 255, 255))
+
+        return torch.tensor(mask[:,:,0]/255, dtype=torch.float32)
+    
+    def square_mask(self, size = [240, 320]):
+        # Prepare a canvas
+        mask = np.zeros([size[0], size[1], 3], np.uint8)
+
+        n = random.randint(3, 8)
+        lenmean = min(size)
+        for i in range(n):
+            pts = [(random.randrange(size[1]), random.randrange(size[0]))]
+            length = random.uniform(lenmean*0.075, lenmean*0.125)
+            direction = random.uniform(0, 2*math.pi)
+            pts.append((int(length * math.cos(direction)) + pts[0][0],
+                int(length * math.sin(direction)) + pts[0][1]))
+            vector = [length * math.cos(direction), length * math.sin(direction)]
+
+            length = random.uniform(lenmean*0.075, lenmean*0.125)
+            direction += random.uniform(math.pi/6, 5*math.pi/6)
+            pts.append((int(length * math.cos(direction)) + pts[1][0],
+                int(length * math.sin(direction)) + pts[1][1]))
+
+            pts.append((int(vector[0]) + pts[2][0], int(vector[1]) + pts[2][1]))
+
+            tmp = pts[2]
+            pts[2] = pts[3]
+            pts[3] = tmp
 
             # Draw a polygon
             cv2.fillPoly(mask, [np.array(pts, np.int32)], (255, 255, 255))

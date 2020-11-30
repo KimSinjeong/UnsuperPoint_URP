@@ -49,12 +49,7 @@ class Coco(Dataset):
         if torch.isnan(des_img).any():
             print("NAN is corrected")
             des_img[torch.isnan(des_img)] = 0.
-        # H, W = self.config['resize']
-        # norm = torch.tensor([[2/W, 0, -1], [0, 2/H, -1], [0, 0, 1]], dtype=torch.float32)
-        # denorm = torch.tensor([[W, 0, W], [0, H, H], [0, 0, 2]], dtype=torch.float32)
-        # mat = denorm * mat * norm
-
-        # return source_img, des_img, tran_mat
+        
         return source_img, des_img, mat
             
     def __len__(self):

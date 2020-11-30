@@ -133,7 +133,7 @@ def sample_homography_np(
                                        np.cos(angles)], axis=1), [-1, 2, 2])
         rotated = np.matmul( (pts2 - center)[np.newaxis,:,:], rot_mat) + center
         if allow_artifacts:
-            valid = np.arange(n_angles)  # all scales are valid except scale=1
+            valid = np.arange(n_angles) # all scales are valid except scale=1
         else:
             valid = (rotated >= 0.) * (rotated < 1.)
             valid = valid.prod(axis=1).prod(axis=1)

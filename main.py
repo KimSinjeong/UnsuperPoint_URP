@@ -59,7 +59,15 @@ def simple_train(config, output_dir, args):
     whole_step = 0
     total = len(trainloader)
     try:
+        if config['data']['curriculum']:
+            maxX = trainloader.dataset.config['homographies']['perspective_amplitude_x']
+            maxY = trainloader.dataset.config['homographies']['perspective_amplitude_y']
         for epoch in tqdm(range(1, epochs+1), desc='epoch'):
+            if config['data']['curriculum']:
+                trainloader.dataset.config['homographies']['perspective_amplitude_x'] = epoch*maxX/epochs
+                trainloader.dataset.config['homographies']['perspective_amplitude_y'] = epoch*maxY/epochs
+            tqdm.write("Max x Perspective: {:.6f}".format(trainloader.dataset.config['homographies']['perspective_amplitude_x']))
+            tqdm.write("Max y Perspective: {:.6f}".format(trainloader.dataset.config['homographies']['perspective_amplitude_y']))
             for batch_idx, (img0, img1, mat) in tqdm(enumerate(trainloader), desc='step', total=total):
                 whole_step += 1
                 model.step = whole_step

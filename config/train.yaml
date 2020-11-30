@@ -1,10 +1,10 @@
 data:
   dataset: 'Coco'
-  root: '/home/sinjeong/gitpjt/pytorch-superpoint/datasets/COCO'
   perspective: 0.1
   resize: [240, 320]
   scale: 0.3
   rot: 30
+  curriculum: false
   homographies:
     translation: true
     rotation: true
@@ -55,3 +55,7 @@ model:
 validation_interval: 100
 tensorboard_interval: 500
 save_interval: 500
+
+rendering:
+  workers: 4
+  steps: 100

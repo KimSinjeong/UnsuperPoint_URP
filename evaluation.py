@@ -71,7 +71,6 @@ def to3dim(img):
     return img
 
 def evaluate(args, **options):
-    # path = '/home/yoyee/Documents/SuperPoint/superpoint/logs/outputs/superpoint_coco/'
     path = args.path
     files = find_files_with_ext(path)
     correctness = []
@@ -150,7 +149,7 @@ def evaluate(args, **options):
                 pts = data['warped_prob']
                 img2 = draw_keypoints(img*255, pts.transpose())
 
-                plot_imgs([img1[[2,1,0],:,:].astype(np.uint8), img2[[2,1,0],:,:].astype(np.uint8)], titles=['img1', 'img2'], dpi=200)
+                plot_imgs([img1[:,:,[2,1,0]].astype(np.uint8), img2[:,:,[2,1,0]].astype(np.uint8)], titles=['img1', 'img2'], dpi=200)
                 plt.title("rep: " + str(repeatability[-1]))
                 plt.tight_layout()
                 
