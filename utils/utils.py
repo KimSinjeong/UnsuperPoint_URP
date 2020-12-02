@@ -159,6 +159,31 @@ def sample_homography_np(
     homography = cv2.getPerspectiveTransform(np.float32(pts1+shift), np.float32(pts2+shift))
     return homography
 
+def warp_image_np(img, mat_homo):
+    '''
+    Inverse warp images
+
+    :param img:
+        an image
+        array [H, W, 3] or [H, W]
+    :param mat_homo_inv:
+        a homography matrix
+        array [3, 3]
+    :return:
+        an warped image
+        array [H, W, 3] or [H, W]
+    '''
+
+    if len(img.shape) == 3:
+        H, W, _ = img.shape
+    else:
+        H, W = img.shape
+    P = np.array([[2/W, 0., -1.], [0, 2/H, -1.], [0., 0., 1.]])
+    invP = np.array([[W/2, 0., W/2], [0, H/2, H/2], [0., 0., 1.]])
+    mat = invP@mat_homo@P
+
+    return cv2.warpPerspective(img, mat, (W, H))
+
 def inv_warp_image_batch(img, mat_homo_inv, device='cpu', mode='bilinear'):
     '''
     Inverse warp images in batch

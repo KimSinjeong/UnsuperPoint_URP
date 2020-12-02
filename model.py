@@ -9,16 +9,8 @@ import torch.nn as nn
 import matplotlib.pyplot as plt
 
 from settings import DEFAULT_SETTING
-from utils.utils import batch_warp_points, normPts, denormPts
-
-# TEMP
-import torchvision.transforms as transforms
-
-transform_test = transforms.Compose([
-    transforms.ToTensor(),
-    transforms.Normalize([0.5,0.5,0.5],[1/0.225,1/0.225,1/0.225])
-])
-# -----
+from utils.utils import batch_warp_points, normPts, denormPts, inv_warp_image_batch
+from torch.nn.functional import interpolate
 
 class UnSuperPoint(nn.Module):
     def __init__(self, config=None):
@@ -178,7 +170,63 @@ class UnSuperPoint(nn.Module):
             self.optimizer.step()
 
         return lossdict['loss'].item()
+    
+    def train_val_step_tri(self, img0, img1, img, mat1, mat2, mask1, mask2, task='train'):
+        self.task = task
+        #with torch.autograd.detect_anomaly():
+        img0 = img0.to(self.dev)
+        img1 = img1.to(self.dev)
+        img = img.to(self.dev)
+        mat1 = mat1.squeeze()
+        mat1 = mat1.to(self.dev)
+        mat2 = mat2.squeeze()
+        mat2 = mat2.to(self.dev)
+        self.optimizer.zero_grad()
+        
+        if task == 'train':
+            s1,p1,d1 = self.forward(img0)
+            s2,p2,d2 = self.forward(img1)
+            s, p, d = self.forward(img)
 
+        else:
+            with torch.no_grad():
+                s1,p1,d1 = self.forward(img0)
+                s2,p2,d2 = self.forward(img1)
+                s, p, d = self.forward(img)
+
+        lossdict = self.triloss(s1,p1,d1,s2,p2,d2,s,p,d,mat1,mat2,mask1,mask2)
+        self.tb_add_loss(lossdict, task)
+
+        if task == 'train' and self.step % self.config['tensorboard_interval'] == 0:
+            self.tb_add_hist('train/A/x_relative', p1[0])
+            self.tb_add_hist('train/A/y_relative', p1[1])
+            self.tb_add_hist('train/A/score', s1)
+            self.tb_add_hist('train/B/x_relative', p2[0])
+            self.tb_add_hist('train/B/y_relative', p2[1])
+            self.tb_add_hist('train/B/score', s2)
+            self.tb_add_hist('train/C/x_relative', p[0])
+            self.tb_add_hist('train/C/y_relative', p[1])
+            self.tb_add_hist('train/C/score', s)
+
+        if task == 'valid':
+            self.tb_add_hist('valid/A/x_relative', p1[0])
+            self.tb_add_hist('valid/A/y_relative', p1[1])
+            self.tb_add_hist('valid/A/score', s1)
+            self.tb_add_hist('valid/B/x_relative', p2[0])
+            self.tb_add_hist('valid/B/y_relative', p2[1])
+            self.tb_add_hist('valid/B/score', s2)
+            self.tb_add_hist('valid/C/x_relative', p[0])
+            self.tb_add_hist('valid/C/y_relative', p[1])
+            self.tb_add_hist('valid/C/score', s)
+            # TODO: Validation operations
+
+        if task == 'train':
+            lossdict['loss'].backward()
+            self.optimizer.step()
+
+        return lossdict['loss'].item()
+        
+    # Loss functions for original UnsuperPoint
     def loss(self, bath_As, bath_Ap, bath_Ad, 
         bath_Bs, bath_Bp, bath_Bd, mat):
         usp = 0; unixy = 0; desc = 0; decorr = 0
@@ -211,7 +259,7 @@ class UnSuperPoint(nn.Module):
         position_B = self.get_position(Bp)
         G = self.getG(position_A, position_B)
 
-        Usploss = self.usploss(As, Bs, mat, G)
+        Usploss = self.usploss(As, Bs, G)
         Uni_xyloss = self.uni_xyloss(Ap, Bp)
 
         Descloss = self.descloss(Ad, Bd, G)
@@ -242,8 +290,8 @@ class UnSuperPoint(nn.Module):
         else:
             return res
 
-    def usploss(self, As, Bs, mat, G):
-        A2BId, Id = self.get_point_pair(G, As, Bs)
+    def usploss(self, As, Bs, G):
+        A2BId, Id = self.get_point_pair(G)
         # print(A2BId.shape, Id.shape)
         # print(reshape_As_k.shape,reshape_Bs_k.shape,d_k.shape)
         B = G.shape[0]
@@ -272,21 +320,6 @@ class UnSuperPoint(nn.Module):
             res[:,y,i,:] = (i + Pamp[:,y,i,:]) * self.downsample
         return res
 
-    def get_batch_position(self, Pamp, flag=None, mat=None):
-        x = 0
-        y = 1
-        res = torch.zeros_like(Pamp)
-        for i in range(Pamp.shape[3]):
-            res[:,x,:,i] = (i + Pamp[:,x,:,i]) * self.downsample
-        for i in range(Pamp.shape[2]):
-            res[:,y,i,:] = (i + Pamp[:,y,i,:]) * self.downsample
-        if flag == 'A':
-            r = torch.cat((Pamp, torch.ones((Pamp.shape[0], 1, Pamp.shape[2], Pamp.shape[3])).to(self.dev)), 1).permute(0, 2, 3, 1)
-            r = torch.matmul(r, mat.T.unsqueeze(1).unsqueeze(1).float())
-            r = torch.div(r,r[:,:,:,2].unsqueeze(3))
-            return r
-        return res
-
     def getG(self, PA, PB):
         b, c = PA.shape[0:2]
         # reshape_PA shape = b, 2, m -> b, m, 2
@@ -302,7 +335,7 @@ class UnSuperPoint(nn.Module):
 
         return G
 
-    def get_point_pair(self, G, As, Bs):
+    def get_point_pair(self, G):
         A2B_min_Id = torch.argmin(G, dim=2)
         B, M = A2B_min_Id.shape[0:2]
         Id = torch.nn.functional.grid_sample(G.unsqueeze(1), 
@@ -363,6 +396,116 @@ class UnSuperPoint(nn.Module):
         one = torch.eye(F).to(self.dev).unsqueeze(0)
         rb = torch.sum(torch.square((molecular / (denominator + 1e-8) - one) / (B * F * (F-1))))
         return rb
+
+    # New loss for changed version for URP
+    def triloss(self, As, Ap, Ad, Bs, Bp, Bd, Cs, Cp, Cd,
+        mat1, mat2, mask1, mask2):
+        numbatch, c = Ap.shape[0:2]
+        f = Ad.shape[1]
+
+        uspA = uspB = unixy = descA = descB = decorr = 0
+
+        mask1 = interpolate(mask1.unsqueeze(1), scale_factor=(0.125, 0.125), mode='bicubic')
+        mask1 = mask1.squeeze(1) >= 0.5
+
+        mask2 = interpolate(mask2.unsqueeze(1), scale_factor=(0.125, 0.125), mode='bicubic')
+        mask2 = mask2.squeeze(1) >= 0.5
+
+
+        position_A = self.get_position(Ap, mat=mat1)
+        position_B = self.get_position(Bp, mat=mat2)
+        position_C = self.get_position(Cp)
+
+        Ga, flatmask1 = self.trigetG(position_A, position_C, mask1)
+        Gb, flatmask2 = self.trigetG(position_B, position_C, mask2)
+
+        for i in range(numbatch):
+            Ga_ = Ga[i][flatmask1[i],:][:,flatmask1[i]]
+            Gb_ = Gb[i][flatmask2[i],:][:,flatmask2[i]]
+            uspA += self.triusploss(As[i], Cs[i], Ga_, mask1[i])
+            uspB += self.triusploss(Bs[i], Cs[i], Gb_, mask2[i])
+
+            descA += self.tridescloss(Ad[i], Cd[i], Ga_, mask1[i])
+            descB += self.tridescloss(Bd[i], Cd[i], Gb_, mask2[i])
+        
+        uspA /= numbatch
+        uspB /= numbatch
+        descA /= numbatch
+        descB /= numbatch
+
+        # Uniform xy loss
+        reshape_PA = Ap.reshape((numbatch,c,-1)).transpose(2,1)
+        reshape_PB = Bp.reshape((numbatch,c,-1)).transpose(2,1)
+        reshape_PC = Bp.reshape((numbatch,c,-1)).transpose(2,1)
+        for i in range(2):
+            unixy += self.get_uni_xy(reshape_PA[:,:,i], numbatch)
+            unixy += self.get_uni_xy(reshape_PB[:,:,i], numbatch)
+            unixy += self.get_uni_xy(reshape_PC[:,:,i], numbatch)
+
+        # Decorrelation loss
+        # reshape_DA, B, C size = 256, M
+        reshape_DA = Ad.reshape((numbatch,f,-1))
+        reshape_DB = Bd.reshape((numbatch,f,-1))
+        reshape_DC = Cd.reshape((numbatch,f,-1))
+        decorr += self.get_R_b(reshape_DA)
+        decorr += self.get_R_b(reshape_DB)
+        decorr += self.get_R_b(reshape_DC)
+
+        wa = torch.sum(mask1).float()/(torch.sum(mask1) + torch.sum(mask2)).float()
+        wb = 1-wa
+
+        loss = self.usp * (wa*uspA + wb*uspB) + self.uni_xy * unixy +\
+            self.desc * (wa*descA + wb*descB) + self.decorr * decorr
+
+        lossdict = {
+            "loss": loss,
+            "A/usp_loss": self.usp * wa * uspA,
+            "B/usp_loss": self.usp * wb * uspB,
+            "uni_xy_loss": self.uni_xy * unixy,
+            "A/descriptor_loss": self.desc * wa * descA,
+            "B/descriptor_loss": self.desc * wb * descB,
+            "decorrelation_loss": self.decorr * decorr
+        }
+        return lossdict
+        
+    def triusploss(self, As, Bs, G, mask):
+        A2BId = torch.argmin(G, dim=1)
+        M = A2BId.shape[0]
+        Id = G.gather(1, A2BId.reshape(-1, 1)).squeeze()
+        Id = Id <= self.correspond
+
+        # print(A2BId.shape, Id.shape)
+        # print(reshape_As_k.shape,reshape_Bs_k.shape,d_k.shape)
+        reshape_As = As[:,mask].squeeze()
+        reshape_Bs = Bs[:,mask].squeeze()
+        positionK_loss = scoreK_loss = uspK_loss = 0
+
+        d_k = G[Id, A2BId[Id]]
+        reshape_As_k = reshape_As[Id]
+        reshape_Bs_k = reshape_Bs[A2BId[Id]]
+        positionK_loss = torch.mean(d_k)
+        scoreK_loss = torch.mean(torch.pow(reshape_As_k - reshape_Bs_k, 2))
+        uspK_loss = self.get_uspK_loss(d_k, reshape_As_k, reshape_Bs_k)
+
+        return (self.position_weight * positionK_loss + 
+            self.score_weight * scoreK_loss + uspK_loss)
+
+    def trigetG(self, PA, PB, mask):
+        b = PA.shape[0]
+        reshape_mask = mask.reshape((b, -1))
+        return self.getG(PA, PB), reshape_mask
+
+    def tridescloss(self, Ad, Bd, G, mask):
+        c = Ad.shape[0]
+        C = G <= 8
+        C_ = G > 8
+        # Ad_reshape size = M, 256; Bd_reshape size = 256, M
+        Ad_reshape = Ad[:,mask]
+        Bd_reshape = Bd[:,mask]
+        AB = torch.matmul(Ad_reshape.transpose(1,0), Bd_reshape)
+        AB[C] = self.d * (self.m_p - AB[C])
+        AB[C_] -= self.m_n
+        return torch.mean(torch.clamp(AB, min=0))
 
     def getPtsDescFromHeatmap(self, point, heatmap, desc):
         '''

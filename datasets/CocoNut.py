@@ -10,11 +10,15 @@ from pathlib import Path
 import torch
 from datasets.Coco import Coco
 from utils.tools import dict_update, Myresize
-from utils.utils import sample_homography_np as sample_homography, inv_warp_image
+from utils.utils import sample_homography_np as sample_homography
+from utils.utils import inv_warp_image, warp_image_np
 
 from settings import COCO_TRAIN, COCO_VAL, DATA_PATH
 
 class CocoNut(Coco):
+    '''
+        New dataset class based on KAIST URP
+    '''
     def __init__(self, transform=None, task='train', **config):
         super(CocoNut, self).__init__(transform, task, **config)
 
@@ -31,22 +35,40 @@ class CocoNut(Coco):
         tran_img1 = self.EnhanceData(re_img1)
         tran_img2 = self.EnhanceData(re_img2)
 
-        #mask = self.generate_mask(self.config['resize'])
-        mask = self.square_mask(self.config['resize'])
-        bmask = torch.ones(self.config['resize'], dtype=torch.float32)
-
         if self.transforms:
             re_img1 = Image.fromarray(cv2.cvtColor(re_img1, cv2.COLOR_BGR2RGB))
-            source_img = self.transforms(re_img1)
+            source_img1 = self.transforms(re_img1)
 
-            tran_img1 = Image.fromarray(cv2.cvtColor(tran_img1,cv2.COLOR_BGR2RGB))
+            re_img2 = Image.fromarray(cv2.cvtColor(re_img2, cv2.COLOR_BGR2RGB))
+            source_img2 = self.transforms(re_img2)
+
+            tran_img1 = Image.fromarray(cv2.cvtColor(tran_img1, cv2.COLOR_BGR2RGB))
             tran_img1 = self.transforms(tran_img1)
 
-            tran_img2 = Image.fromarray(cv2.cvtColor(tran_img2,cv2.COLOR_BGR2RGB))
+            tran_img2 = Image.fromarray(cv2.cvtColor(tran_img2, cv2.COLOR_BGR2RGB))
             tran_img2 = self.transforms(tran_img2)
 
         mat1 = sample_homography(np.array([2, 2]), shift=-1, **self.config['homographies'])
         mat2 = sample_homography(np.array([2, 2]), shift=-1, **self.config['homographies'])
+
+        # Mask resampler
+        unw_bmask = np.ones(self.config['resize'], dtype=float)
+        # mask = self.generate_mask(self.config['resize'])
+        mask = self.square_mask(self.config['resize'])
+        mask = warp_image_np(mask, mat2)
+        cmask = unw_bmask - mask
+        bmask = warp_image_np(unw_bmask, mat1)
+
+        while np.sum(bmask*mask)/np.sum(bmask*(cmask + mask)) < 0.2:
+            mask = self.square_mask(self.config['resize'])
+            mask = warp_image_np(mask, mat2)
+            cmask = unw_bmask - mask
+            bmask = warp_image_np(unw_bmask, mat1)
+
+        mask = torch.tensor(mask, dtype=torch.float32)
+        cmask = torch.tensor(cmask, dtype=torch.float32)
+        bmask = torch.tensor(bmask, dtype=torch.float32)
+
         mat1 = torch.tensor(mat1, dtype=torch.float32)
         mat2 = torch.tensor(mat2, dtype=torch.float32)
 
@@ -56,29 +78,33 @@ class CocoNut(Coco):
         inv_mat2 = torch.inverse(mat2)
         tran_img2 = inv_warp_image(tran_img2, inv_mat2).squeeze(0)
 
-        mask = inv_warp_image(torch.stack([mask, mask, mask]), inv_mat2)[0].unsqueeze(0)
-        cmask = bmask.unsqueeze(0) - mask
-        bmask = inv_warp_image(torch.stack([bmask, bmask, bmask]), inv_mat1)[0].unsqueeze(0)
-
         des_img = bmask*(cmask*tran_img1 + mask*tran_img2)
 
-        if torch.isnan(source_img).any():
+        if torch.isnan(source_img1).any():
             print("NAN is corrected in src image")
-            des_img[torch.isnan(source_img)] = 0.
+            des_img[torch.isnan(source_img1)] = 0.
+
+        if torch.isnan(source_img2).any():
+            print("NAN is corrected in src image")
+            des_img[torch.isnan(source_img2)] = 0.
 
         if torch.isnan(des_img).any():
             print("NAN is corrected in des image")
             des_img[torch.isnan(des_img)] = 0.
 
-        return source_img, des_img, mat1
+        return source_img1, source_img2, des_img, mat1, mat2, bmask*cmask, bmask*mask
+        # return source_img1, des_img, mat1
 
-    def generate_mask(self, size = [240, 320]):
+    def generate_mask(self, size=[240, 320]):
+        '''
+            Given size, make a mask with random shape patches
+        '''
         # Prepare a canvas
         mask = np.zeros([size[0], size[1], 3], np.uint8)
 
-        n = random.randint(3, 8)
+        numpatches = random.randint(3, 8)
         lenmean = min(size)
-        for i in range(n):
+        for i in range(numpatches):
             direction = -math.pi/2
             pts = [(random.randrange(size[1]), random.randrange(size[0]))]
             m = random.randint(2, 6)
@@ -86,41 +112,47 @@ class CocoNut(Coco):
                 length = random.uniform(lenmean*0.075, lenmean*0.125)
                 direction += random.uniform(0, math.pi/2)
                 vector = (int(length * math.cos(direction)) + pts[j][0],
-                            int(length * math.sin(direction)) + pts[j][1])
+                          int(length * math.sin(direction)) + pts[j][1])
 
                 pts.append(vector)
 
             # Draw a polygon
             cv2.fillPoly(mask, [np.array(pts, np.int32)], (255, 255, 255))
 
-        return torch.tensor(mask[:,:,0]/255, dtype=torch.float32)
-    
-    def square_mask(self, size = [240, 320]):
+        # return torch.tensor(mask[:, :, 0]/255, dtype=torch.float32)
+        return(mask[:, :, 0]/255).astype(np.float32)
+
+    def square_mask(self, size=[240, 320]):
+        '''
+            Given size, make a mask with square patches
+        '''
         # Prepare a canvas
         mask = np.zeros([size[0], size[1], 3], np.uint8)
+        while np.sum(mask)/(size[0]*size[1]) < 0.3:
+            numsq = random.randint(3, 6)
+            lenmean = min(size)
+            for i in range(numsq):
+                pts = [(random.randrange(size[1]), random.randrange(size[0]))]
+                length = random.uniform(lenmean*0.175, lenmean*0.225)
+                length = lenmean*0.5
+                direction = random.uniform(0, 2*math.pi)
+                pts.append((int(length * math.cos(direction)) + pts[0][0],
+                            int(length * math.sin(direction)) + pts[0][1]))
+                vector = [length * math.cos(direction), length * math.sin(direction)]
 
-        n = random.randint(3, 8)
-        lenmean = min(size)
-        for i in range(n):
-            pts = [(random.randrange(size[1]), random.randrange(size[0]))]
-            length = random.uniform(lenmean*0.075, lenmean*0.125)
-            direction = random.uniform(0, 2*math.pi)
-            pts.append((int(length * math.cos(direction)) + pts[0][0],
-                int(length * math.sin(direction)) + pts[0][1]))
-            vector = [length * math.cos(direction), length * math.sin(direction)]
+                length = random.uniform(lenmean*0.175, lenmean*0.225)
+                length = lenmean*0.5
+                direction += random.uniform(math.pi/6, math.pi/2)
+                pts.append((int(length * math.cos(direction)) + pts[0][0],
+                    int(length * math.sin(direction)) + pts[0][1]))
+                
+                pts.append((int(vector[0]) + pts[2][0], int(vector[1]) + pts[2][1]))
+                tmp = pts[2]
+                pts[2] = pts[3]
+                pts[3] = tmp
+                
+                # Draw a polygon
+                cv2.fillPoly(mask, [np.array(pts, np.int32)], (255, 255, 255))
 
-            length = random.uniform(lenmean*0.075, lenmean*0.125)
-            direction += random.uniform(math.pi/6, 5*math.pi/6)
-            pts.append((int(length * math.cos(direction)) + pts[1][0],
-                int(length * math.sin(direction)) + pts[1][1]))
-
-            pts.append((int(vector[0]) + pts[2][0], int(vector[1]) + pts[2][1]))
-
-            tmp = pts[2]
-            pts[2] = pts[3]
-            pts[3] = tmp
-
-            # Draw a polygon
-            cv2.fillPoly(mask, [np.array(pts, np.int32)], (255, 255, 255))
-
-        return torch.tensor(mask[:,:,0]/255, dtype=torch.float32)
+        # return torch.tensor(mask[:, :, 0]/255, dtype=torch.float32)
+        return (mask[:, :, 0]/255).astype(np.float32)

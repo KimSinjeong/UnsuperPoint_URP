@@ -14,6 +14,9 @@ from utils.utils import sample_homography_np as sample_homography, inv_warp_imag
 from settings import COCO_TRAIN, COCO_VAL, DATA_PATH
 
 class Coco(Dataset):
+    '''
+        A dataset class for COCO
+    '''
     default_config = {}
     def __init__(self, transform=None, task='train', **config):
         self.task = task
@@ -35,10 +38,10 @@ class Coco(Dataset):
         tran_img = self.EnhanceData(re_img)
 
         if self.transforms:
-            re_img = Image.fromarray(cv2.cvtColor(re_img,cv2.COLOR_BGR2RGB))
+            re_img = Image.fromarray(cv2.cvtColor(re_img, cv2.COLOR_BGR2RGB))
             source_img = self.transforms(re_img)
 
-            tran_img = Image.fromarray(cv2.cvtColor(tran_img,cv2.COLOR_BGR2RGB))
+            tran_img = Image.fromarray(cv2.cvtColor(tran_img, cv2.COLOR_BGR2RGB))
             des_img = self.transforms(tran_img)
 
         tran_mat = sample_homography(np.array([2, 2]), shift=-1, **self.config['homographies'])
@@ -49,9 +52,9 @@ class Coco(Dataset):
         if torch.isnan(des_img).any():
             print("NAN is corrected")
             des_img[torch.isnan(des_img)] = 0.
-        
+
         return source_img, des_img, mat
-            
+
     def __len__(self):
         return len(self.images)
 

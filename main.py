@@ -68,11 +68,13 @@ def simple_train(config, output_dir, args):
                 trainloader.dataset.config['homographies']['perspective_amplitude_y'] = epoch*maxY/epochs
             tqdm.write("Max x Perspective: {:.6f}".format(trainloader.dataset.config['homographies']['perspective_amplitude_x']))
             tqdm.write("Max y Perspective: {:.6f}".format(trainloader.dataset.config['homographies']['perspective_amplitude_y']))
-            for batch_idx, (img0, img1, mat) in tqdm(enumerate(trainloader), desc='step', total=total):
+            # for batch_idx, (img0, img1, mat) in tqdm(enumerate(trainloader), desc='step', total=total):
+            for batch_idx, (img0, img1, img, mat1, mat2, mask1, mask2) in tqdm(enumerate(trainloader), desc='step', total=total):
                 whole_step += 1
                 model.step = whole_step
 
-                loss = model.train_val_step(img0, img1, mat, 'train')
+                # loss = model.train_val_step(img0, img1, mat, 'train')
+                loss = model.train_val_step_tri(img0, img1, img, mat1, mat2, mask1, mask2, 'train')
 
                 tqdm.write('Loss: {:.6f}'.format(loss))
                 
@@ -80,8 +82,10 @@ def simple_train(config, output_dir, args):
                     torch.save(model.state_dict(), os.path.join(savepath, config['model']['name'] + '_{}.pkl'.format(whole_step)))
                 
                 if args.eval and whole_step % config['validation_interval'] == 0:
-                    for j, (img0, img1, mat) in enumerate(valloader):
-                        model.train_val_step(img0, img1, mat, 'valid')
+                    # for j, (img0, img1, mat) in enumerate(valloader):
+                    for j, (img0, img1, img, mat1, mat2, mask1, mask2) in enumerate(valloader):
+                        # model.train_val_step(img0, img1, mat, 'valid')
+                        model.train_val_step_tri(img0, img1, img, mat1, mat2, mask1, mask2, 'valid')
                         if j > config['training'].get("step_val", 4):
                             break
 
@@ -91,6 +95,7 @@ def simple_train(config, output_dir, args):
         print ("press ctrl + c, save model!")
         torch.save(model.state_dict(), os.path.join(savepath, config['model']['name'] + '_{}.pkl'.format(whole_step)))
         pass
+    
 
 def simple_export(config, output_dir, args):
     """
@@ -234,20 +239,23 @@ def simple_render(config, output_dir, args):
 
     # Denormalization & Save
     whole_step = 0
-    for batch_idx, (img0, img1, mat) in tqdm(enumerate(renderloader), desc='step', total=steps):
+    # for batch_idx, (img0, img1, mat) in tqdm(enumerate(renderloader), desc='step', total=steps):
+    for batch_idx, (img0, img1, img, mat1, mat2, mask1, mask2) in tqdm(enumerate(renderloader), desc='step', total=steps):
         whole_step += 1
+        if whole_step > steps:
+            break
 
-        img_0 = 255*squeezeToNumpy(img0)[[2,1,0],:,:].transpose((1, 2, 0))
-        img_1 = 255*squeezeToNumpy(img1)[[2,1,0],:,:].transpose((1, 2, 0))
+        img_0 = 255*squeezeToNumpy(img0)[[2, 1, 0], :, :].transpose((1, 2, 0))
+        img_1 = 255*squeezeToNumpy(img1)[[2, 1, 0], :, :].transpose((1, 2, 0))
+        img = 255*squeezeToNumpy(img)[[2, 1, 0], :, :].transpose((1, 2, 0))
 
-        plot_imgs([img_0.astype(np.uint8), img_1.astype(np.uint8)], titles=['img1', 'img2'], dpi=200)
+        plot_imgs([img_0.astype(np.uint8), img.astype(np.uint8), img_1.astype(np.uint8)], titles=['img1', 'img+', 'img2'], dpi=200)
+        # plot_imgs([img_0.astype(np.uint8), img_1.astype(np.uint8)], titles=['img1', 'img2'], dpi=200)
         plt.title(str(batch_idx))
         plt.tight_layout()
         
         plt.savefig(savepath / (str(batch_idx) + '.png'), dpi=300, bbox_inches='tight')
-        
-        if whole_step >= steps:
-            break
+        plt.close()
 
 if __name__ == '__main__':
     # add parser
