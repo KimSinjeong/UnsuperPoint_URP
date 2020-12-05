@@ -405,13 +405,6 @@ class UnSuperPoint(nn.Module):
 
         uspA = uspB = unixy = descA = descB = decorr = 0
 
-        mask1 = interpolate(mask1.unsqueeze(1), scale_factor=(0.125, 0.125), mode='bicubic')
-        mask1 = mask1.squeeze(1) >= 0.5
-
-        mask2 = interpolate(mask2.unsqueeze(1), scale_factor=(0.125, 0.125), mode='bicubic')
-        mask2 = mask2.squeeze(1) >= 0.5
-
-
         position_A = self.get_position(Ap, mat=mat1)
         position_B = self.get_position(Bp, mat=mat2)
         position_C = self.get_position(Cp)

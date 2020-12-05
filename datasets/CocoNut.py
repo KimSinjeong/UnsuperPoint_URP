@@ -59,11 +59,28 @@ class CocoNut(Coco):
         cmask = unw_bmask - mask
         bmask = warp_image_np(unw_bmask, mat1)
 
-        while np.sum(bmask*mask)/np.sum(bmask*(cmask + mask)) < 0.2:
+        tmpmask = cv2.resize(np.stack([mask, cmask, bmask], axis=2),
+                          dsize=(int(self.config['resize'][1]/8), int(self.config['resize'][0]/8)),
+                          interpolation=cv2.INTER_NEAREST)
+
+        rate = np.sum(tmpmask[:, :, 2]*tmpmask[:, :, 0])/\
+               np.sum(tmpmask[:, :, 2]*(tmpmask[:, :, 1] + tmpmask[:, :, 0]))
+        retry = 1000
+        cnt = 0
+
+        while (rate < 0.25 or rate > 0.75) and cnt < retry:
             mask = self.square_mask(self.config['resize'])
             mask = warp_image_np(mask, mat2)
             cmask = unw_bmask - mask
             bmask = warp_image_np(unw_bmask, mat1)
+
+            tmpmask = cv2.resize(np.stack([mask, cmask, bmask], axis=2),
+                          dsize=(int(self.config['resize'][1]/8), int(self.config['resize'][0]/8)),
+                          interpolation=cv2.INTER_NEAREST)
+
+            rate = np.sum(tmpmask[:, :, 2]*tmpmask[:, :, 0])/\
+                   np.sum(tmpmask[:, :, 2]*(tmpmask[:, :, 1] + tmpmask[:, :, 0]))
+            cnt += 1
 
         mask = torch.tensor(mask, dtype=torch.float32)
         cmask = torch.tensor(cmask, dtype=torch.float32)
@@ -92,8 +109,9 @@ class CocoNut(Coco):
             print("NAN is corrected in des image")
             des_img[torch.isnan(des_img)] = 0.
 
-        return source_img1, source_img2, des_img, mat1, mat2, bmask*cmask, bmask*mask
-        # return source_img1, des_img, mat1
+        return source_img1, source_img2, des_img, mat1, mat2,\
+            torch.tensor(tmpmask[:, :, 2]*tmpmask[:, :, 1], dtype=torch.bool),\
+            torch.tensor(tmpmask[:, :, 2]*tmpmask[:, :, 0], dtype=torch.bool)
 
     def generate_mask(self, size=[240, 320]):
         '''
