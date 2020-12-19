@@ -1,5 +1,6 @@
 datasets/COCO
 datasets/HPatches
+datasets/scenecity
 runs
 logs/*
 *__pycache__

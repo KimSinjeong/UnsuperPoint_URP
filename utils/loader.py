@@ -114,7 +114,7 @@ def dataLoader(config, dataset='Coco', warp_input=False, train=True, val=True):
     return {'train_loader': train_loader, 'val_loader': val_loader,
             'train_set': train_set, 'val_set': val_set}
 
-def testLoader(config, dataset='hpatches', warp_input=False):
+def testLoader(config, dataset='hpatches'):
     import torchvision.transforms as transforms
     training_params = config.get('testing', {})
     workers_test = training_params.get('workers_test', 1) # 16
@@ -128,9 +128,19 @@ def testLoader(config, dataset='hpatches', warp_input=False):
     test_loader = None
     if dataset == 'hpatches':
         from datasets.patches_dataset import PatchesDataset
-        if config['data']['preprocessing']['resize']:
-            size = config['data']['preprocessing']['resize']
         test_set = PatchesDataset(
+            transform=data_transforms['test'],
+            **config['data'],
+        )
+        test_loader = torch.utils.data.DataLoader(
+            test_set, batch_size=1, shuffle=False,
+            pin_memory=True,
+            num_workers=workers_test,
+            worker_init_fn=worker_init_fn
+        )
+    elif dataset == 'scenecity':
+        from datasets.scenecity_dataset import SceneCity
+        test_set = SceneCity(
             transform=data_transforms['test'],
             **config['data'],
         )

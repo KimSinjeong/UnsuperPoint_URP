@@ -74,18 +74,38 @@ class UnSuperPoint(nn.Module):
             nn.LeakyReLU(inplace=True)
         )
 
+        self.branch1 = nn.Sequential(
+            nn.Conv2d(256,256,3,1,padding=1),
+            nn.BatchNorm2d(256),
+            nn.LeakyReLU(inplace=True)
+        )
+        self.score1 = nn.Sequential(
+            nn.Conv2d(256,1,3,1,padding=1),
+            nn.Sigmoid()
+        )
+        self.descriptor1 = nn.Sequential(
+            nn.Conv2d(256,128,3,1,padding=1)
+        )
+
+        self.branch2 = nn.Sequential(
+            nn.Conv2d(256,256,3,1,padding=1),
+            nn.BatchNorm2d(256),
+            nn.LeakyReLU(inplace=True)
+        )
+        self.score2 = nn.Sequential(
+            nn.Conv2d(256,1,3,1,padding=1),
+            nn.Sigmoid()
+        )
+        self.descriptor2 = nn.Sequential(
+            nn.Conv2d(256,128,3,1,padding=1)
+        )
+
+        '''
         self.score = nn.Sequential(
             nn.Conv2d(256,256,3,1,padding=1),
             nn.BatchNorm2d(256),
             nn.LeakyReLU(inplace=True), 
             nn.Conv2d(256,1,3,1,padding=1),
-            nn.Sigmoid()
-        )
-        self.position = nn.Sequential(
-            nn.Conv2d(256,256,3,1,padding=1),
-            nn.BatchNorm2d(256),
-            nn.LeakyReLU(inplace=True), 
-            nn.Conv2d(256,2,3,1,padding=1),
             nn.Sigmoid()
         )
         self.descriptor = nn.Sequential(
@@ -94,17 +114,30 @@ class UnSuperPoint(nn.Module):
             nn.LeakyReLU(inplace=True), 
             nn.Conv2d(256, 256,3,1,padding=1)
         )
+        '''
+        self.position = nn.Sequential(
+            nn.Conv2d(256,256,3,1,padding=1),
+            nn.BatchNorm2d(256),
+            nn.LeakyReLU(inplace=True), 
+            nn.Conv2d(256,2,3,1,padding=1),
+            nn.Sigmoid()
+        )
 
     def forward(self, x):
         h,w = x.shape[-2:]
         self.h = h
         self.w = w
         output = self.cnn(x)
-        s = self.score(output)
+        b1 = self.branch1(output)
+        b2 = self.branch2(output)
+        s1 = self.score1(b1)
+        d1 = self.descriptor1(b1)
+        s2 = self.score2(b2)
+        d2 = self.descriptor2(b2)
         p = self.position(output)
-        d = self.descriptor(output)
-        desc = self.interpolate(p, d, h, w)
-        return s,p,desc
+        desc1 = self.interpolate(p, d1, h, w)
+        desc2 = self.interpolate(p, d2, h, w)
+        return p, s1, desc1, s2, desc2
 
     def interpolate(self, p, d, h, w):
         # b, c, h, w
@@ -182,42 +215,48 @@ class UnSuperPoint(nn.Module):
         mat2 = mat2.squeeze()
         mat2 = mat2.to(self.dev)
         self.optimizer.zero_grad()
-        
+
         if task == 'train':
-            s1,p1,d1 = self.forward(img0)
-            s2,p2,d2 = self.forward(img1)
-            s, p, d = self.forward(img)
+            p1, s11, d11, s12, d12 = self.forward(img0)
+            p2, s21, d21, s22, d22 = self.forward(img1)
+            p, s1, d1, s2, d2 = self.forward(img)
 
         else:
             with torch.no_grad():
-                s1,p1,d1 = self.forward(img0)
-                s2,p2,d2 = self.forward(img1)
-                s, p, d = self.forward(img)
+                p1, s11, d11, s12, d12 = self.forward(img0)
+                p2, s21, d21, s22, d22 = self.forward(img1)
+                p, s1, d1, s2, d2 = self.forward(img)
 
-        lossdict = self.triloss(s1,p1,d1,s2,p2,d2,s,p,d,mat1,mat2,mask1,mask2)
+        lossdict = self.triloss(p1, s11, d11, s12, d12, p2, s21, d21, s22, d22, p, s1, d1, s2, d2,mat1,mat2,mask1,mask2)
         self.tb_add_loss(lossdict, task)
 
         if task == 'train' and self.step % self.config['tensorboard_interval'] == 0:
             self.tb_add_hist('train/A/x_relative', p1[0])
             self.tb_add_hist('train/A/y_relative', p1[1])
-            self.tb_add_hist('train/A/score', s1)
+            self.tb_add_hist('train/A/score1', s11)
+            self.tb_add_hist('train/A/score2', s12)
             self.tb_add_hist('train/B/x_relative', p2[0])
             self.tb_add_hist('train/B/y_relative', p2[1])
-            self.tb_add_hist('train/B/score', s2)
+            self.tb_add_hist('train/B/score1', s21)
+            self.tb_add_hist('train/B/score2', s22)
             self.tb_add_hist('train/C/x_relative', p[0])
             self.tb_add_hist('train/C/y_relative', p[1])
-            self.tb_add_hist('train/C/score', s)
+            self.tb_add_hist('train/C/score1', s1)
+            self.tb_add_hist('train/C/score2', s2)
 
         if task == 'valid':
             self.tb_add_hist('valid/A/x_relative', p1[0])
             self.tb_add_hist('valid/A/y_relative', p1[1])
-            self.tb_add_hist('valid/A/score', s1)
+            self.tb_add_hist('valid/A/score1', s11)
+            self.tb_add_hist('valid/A/score2', s12)
             self.tb_add_hist('valid/B/x_relative', p2[0])
             self.tb_add_hist('valid/B/y_relative', p2[1])
-            self.tb_add_hist('valid/B/score', s2)
+            self.tb_add_hist('valid/B/score1', s21)
+            self.tb_add_hist('valid/B/score2', s22)
             self.tb_add_hist('valid/C/x_relative', p[0])
             self.tb_add_hist('valid/C/y_relative', p[1])
-            self.tb_add_hist('valid/C/score', s)
+            self.tb_add_hist('valid/C/score1', s1)
+            self.tb_add_hist('valid/C/score2', s2)
             # TODO: Validation operations
 
         if task == 'train':
@@ -396,16 +435,33 @@ class UnSuperPoint(nn.Module):
         return rb
 
     # New loss for changed version for URP
-    def triloss(self, As, Ap, Ad, Bs, Bp, Bd, Cs, Cp, Cd,
+    def triloss(self, Ap, As1, Ad1, As2, Ad2, Bp, Bs1, Bd1, Bs2, Bd2, Cp, Cs1, Cd1, Cs2, Cd2,
         mat1, mat2, mask1, mask2):
         numbatch, c = Ap.shape[0:2]
-        f = Ad.shape[1]
+        f = Ad1.shape[1]
 
         uspA = uspB = unixy = descA = descB = decorr = 0
 
         position_A = self.get_position(Ap, mat=mat1)
         position_B = self.get_position(Bp, mat=mat2)
         position_C = self.get_position(Cp)
+
+        # TODO: Concatenate mask
+        mask1 = torch.cat([mask1, mask1], dim=2)
+        mask2 = torch.cat([mask2, mask2], dim=2)
+
+        # TODO: Concatenate positions
+        position_A = torch.cat([position_A, position_A], dim=3)
+        position_B = torch.cat([position_B, position_B], dim=3)
+        position_C = torch.cat([position_C, position_C], dim=3)
+
+        # TODO: Concatenate s and d
+        As = torch.cat([As1, As2], dim=3)
+        Bs = torch.cat([Bs1, Bs2], dim=3)
+        Cs = torch.cat([Cs1, Cs2], dim=3)
+        Ad = torch.cat([Ad1, Ad2], dim=3)
+        Bd = torch.cat([Bd1, Bd2], dim=3)
+        Cd = torch.cat([Cd1, Cd2], dim=3)
 
         # Apply homography to each mask here
         mask1prime = inv_warp_image(torch.stack([mask1, mask1, mask1], dim=1).to('cuda').float(), mat1.to('cuda'), device='cuda', mode='nearest')[:,0,:,:].bool()
