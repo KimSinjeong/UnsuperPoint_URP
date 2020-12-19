@@ -200,12 +200,23 @@ def simple_export(config, output_dir, args):
         pred.update({"warped_image": ((img_1/0.225+0.5)*255).astype(np.uint8)})
         # print("total points: ", pts.shape)
         pred.update(
-            {
-                "warped_prob": pts.transpose(),
-                "warped_desc": desc.transpose(),
-                "homography": squeezeToNumpy(sample["homography"]),
-            }
-        )
+                {
+                    "warped_prob": pts.transpose(),
+                    "warped_desc": desc.transpose(),
+                }
+            )
+        if config['data']['dataset'] == 'hpatches':
+            pred.update(
+                {
+                    "homography": squeezeToNumpy(sample["homography"]),
+                }
+            )
+        elif config['data']['dataset'] == 'scenecity':
+            pred.update(
+                {
+                    "fundamental": squeezeToNumpy(sample["fundamental"]),
+                }
+            )
 
         if outputMatches == True:
             matches = tracker.get_matches()

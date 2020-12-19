@@ -54,10 +54,10 @@ class CocoNut(Coco):
         # Mask resampler
         unw_bmask = np.ones(self.config['resize'], dtype=float)
         # mask = self.generate_mask(self.config['resize'])
-        mask = self.square_mask(self.config['resize'])
-        mask = warp_image_np(mask, mat2)
-        cmask = unw_bmask - mask
+        ori_mask = self.square_mask(self.config['resize'])
+        mask = warp_image_np(ori_mask, mat2)
         bmask = warp_image_np(unw_bmask, mat1)
+        cmask = bmask*(1 - mask)
 
         tmpmask = cv2.resize(np.stack([mask, cmask, bmask], axis=2),
                           dsize=(int(self.config['resize'][1]/8), int(self.config['resize'][0]/8)),
@@ -69,10 +69,10 @@ class CocoNut(Coco):
         cnt = 0
 
         while (rate < 0.25 or rate > 0.75) and cnt < retry:
-            mask = self.square_mask(self.config['resize'])
-            mask = warp_image_np(mask, mat2)
-            cmask = unw_bmask - mask
+            ori_mask = self.square_mask(self.config['resize'])
+            mask = warp_image_np(ori_mask, mat2)
             bmask = warp_image_np(unw_bmask, mat1)
+            cmask = bmask*(1 - mask)
 
             tmpmask = cv2.resize(np.stack([mask, cmask, bmask], axis=2),
                           dsize=(int(self.config['resize'][1]/8), int(self.config['resize'][0]/8)),
@@ -81,6 +81,8 @@ class CocoNut(Coco):
             rate = np.sum(tmpmask[:, :, 2]*tmpmask[:, :, 0])/\
                    np.sum(tmpmask[:, :, 2]*(tmpmask[:, :, 1] + tmpmask[:, :, 0]))
             cnt += 1
+
+        # Calculate Original Masks
 
         mask = torch.tensor(mask, dtype=torch.float32)
         cmask = torch.tensor(cmask, dtype=torch.float32)

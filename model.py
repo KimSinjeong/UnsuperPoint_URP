@@ -9,7 +9,7 @@ import torch.nn as nn
 import matplotlib.pyplot as plt
 
 from settings import DEFAULT_SETTING
-from utils.utils import batch_warp_points, normPts, denormPts, inv_warp_image_batch
+from utils.utils import batch_warp_points, normPts, denormPts, inv_warp_image
 from torch.nn.functional import interpolate
 
 class UnSuperPoint(nn.Module):
@@ -275,7 +275,7 @@ class UnSuperPoint(nn.Module):
         for i in range(Pmap.shape[3]):
             res[:,x,:,i] = (i + Pmap[:,x,:,i]) * self.downsample
         for i in range(Pmap.shape[2]):
-            res[:,y,i,:] = (i + Pmap[:,y,i,:]) * self.downsample 
+            res[:,y,i,:] = (i + Pmap[:,y,i,:]) * self.downsample
         if mat is not None:
             # print(mat.shape)
             shape = torch.tensor([Pmap.shape[3], Pmap.shape[2]]).to(self.dev) * self.downsample
@@ -338,9 +338,7 @@ class UnSuperPoint(nn.Module):
     def get_point_pair(self, G):
         A2B_min_Id = torch.argmin(G, dim=2)
         B, M = A2B_min_Id.shape[0:2]
-        Id = torch.nn.functional.grid_sample(G.unsqueeze(1), 
-            torch.stack([torch.arange(M).reshape(1, M).repeat(B, 1).to(self.dev), A2B_min_Id],
-                dim=2).unsqueeze(2).float())
+        Id = G.gather(2, A2B_min_Id.reshape(B, -1, 1))
         Id = Id.squeeze() <= self.correspond
         return A2B_min_Id, Id
 
@@ -409,17 +407,21 @@ class UnSuperPoint(nn.Module):
         position_B = self.get_position(Bp, mat=mat2)
         position_C = self.get_position(Cp)
 
-        Ga, flatmask1 = self.trigetG(position_A, position_C, mask1)
-        Gb, flatmask2 = self.trigetG(position_B, position_C, mask2)
+        # Apply homography to each mask here
+        mask1prime = inv_warp_image(torch.stack([mask1, mask1, mask1], dim=1).to('cuda').float(), mat1.to('cuda'), device='cuda', mode='nearest')[:,0,:,:].bool()
+        mask2prime = inv_warp_image(torch.stack([mask2, mask2, mask2], dim=1).to('cuda').float(), mat2.to('cuda'), device='cuda', mode='nearest')[:,0,:,:].bool()
+
+        Ga, flatmask1, flatmask1prime = self.trigetG(position_A, position_C, mask1, mask1prime)
+        Gb, flatmask2, flatmask2prime = self.trigetG(position_B, position_C, mask2, mask2prime)
 
         for i in range(numbatch):
-            Ga_ = Ga[i][flatmask1[i],:][:,flatmask1[i]]
-            Gb_ = Gb[i][flatmask2[i],:][:,flatmask2[i]]
-            uspA += self.triusploss(As[i], Cs[i], Ga_, mask1[i])
-            uspB += self.triusploss(Bs[i], Cs[i], Gb_, mask2[i])
+            Ga_ = Ga[i][flatmask1prime[i],:][:,flatmask1[i]]
+            Gb_ = Gb[i][flatmask2prime[i],:][:,flatmask2[i]]
+            uspA += self.triusploss(As[i], Cs[i], Ga_, mask1prime[i], mask1[i])
+            uspB += self.triusploss(Bs[i], Cs[i], Gb_, mask2prime[i], mask2[i])
 
-            descA += self.tridescloss(Ad[i], Cd[i], Ga_, mask1[i])
-            descB += self.tridescloss(Bd[i], Cd[i], Gb_, mask2[i])
+            descA += self.tridescloss(Ad[i], Cd[i], Ga_, mask1prime[i], mask1[i])
+            descB += self.tridescloss(Bd[i], Cd[i], Gb_, mask2prime[i], mask2[i])
         
         uspA /= numbatch
         uspB /= numbatch
@@ -461,40 +463,54 @@ class UnSuperPoint(nn.Module):
         }
         return lossdict
         
-    def triusploss(self, As, Bs, G, mask):
-        A2BId = torch.argmin(G, dim=1)
-        M = A2BId.shape[0]
-        Id = G.gather(1, A2BId.reshape(-1, 1)).squeeze()
-        Id = Id <= self.correspond
+    def triusploss(self, As, Bs, G, mask1, mask2):
+        try:
+            A2BId = torch.argmin(G, dim=1)
+            M = A2BId.shape[0]
+            Id = G.gather(1, A2BId.reshape(-1, 1)).squeeze()
+            Id = Id <= self.correspond
 
-        # print(A2BId.shape, Id.shape)
-        # print(reshape_As_k.shape,reshape_Bs_k.shape,d_k.shape)
-        reshape_As = As[:,mask].squeeze()
-        reshape_Bs = Bs[:,mask].squeeze()
-        positionK_loss = scoreK_loss = uspK_loss = 0
+            # print(A2BId.shape, Id.shape)
+            # print(reshape_As_k.shape,reshape_Bs_k.shape,d_k.shape)
+            reshape_As = As[:,mask1].squeeze()
+            reshape_Bs = Bs[:,mask2].squeeze()
+            positionK_loss = scoreK_loss = uspK_loss = 0
 
-        d_k = G[Id, A2BId[Id]]
-        reshape_As_k = reshape_As[Id]
-        reshape_Bs_k = reshape_Bs[A2BId[Id]]
-        positionK_loss = torch.mean(d_k)
-        scoreK_loss = torch.mean(torch.pow(reshape_As_k - reshape_Bs_k, 2))
-        uspK_loss = self.get_uspK_loss(d_k, reshape_As_k, reshape_Bs_k)
+            d_k = G[Id, A2BId[Id]]
+            reshape_As_k = reshape_As[Id]
+            reshape_Bs_k = reshape_Bs[A2BId[Id]]
+            positionK_loss = torch.mean(d_k)
+            scoreK_loss = torch.mean(torch.pow(reshape_As_k - reshape_Bs_k, 2))
+            uspK_loss = self.get_uspK_loss(d_k, reshape_As_k, reshape_Bs_k)
 
-        return (self.position_weight * positionK_loss + 
-            self.score_weight * scoreK_loss + uspK_loss)
+            return (self.position_weight * positionK_loss +
+                self.score_weight * scoreK_loss + uspK_loss)
 
-    def trigetG(self, PA, PB, mask):
+        except IndexError as e:
+            print(e)
+            print(A2BId.shape)
+            print(Id.shape)
+            print(reshape_Bs.shape)
+            return 0
+
+        except RuntimeError as e:
+            print(e)
+            print(G.shape)
+            return 0
+
+    def trigetG(self, PA, PB, mask, maskprime):
         b = PA.shape[0]
         reshape_mask = mask.reshape((b, -1))
-        return self.getG(PA, PB), reshape_mask
+        reshape_maskprime = maskprime.reshape((b, -1))
+        return self.getG(PA, PB), reshape_mask, reshape_maskprime
 
-    def tridescloss(self, Ad, Bd, G, mask):
+    def tridescloss(self, Ad, Bd, G, mask1, mask2):
         c = Ad.shape[0]
-        C = G <= 8
-        C_ = G > 8
-        # Ad_reshape size = M, 256; Bd_reshape size = 256, M
-        Ad_reshape = Ad[:,mask]
-        Bd_reshape = Bd[:,mask]
+        C = G <= 8 # C  size = M_A, M_B
+        C_ = G > 8 # C_ size = M_A, M_B
+        # Ad_reshape size = M_A, 256; Bd_reshape size = 256, M_B
+        Ad_reshape = Ad[:,mask1]
+        Bd_reshape = Bd[:,mask2]
         AB = torch.matmul(Ad_reshape.transpose(1,0), Bd_reshape)
         AB[C] = self.d * (self.m_p - AB[C])
         AB[C_] -= self.m_n

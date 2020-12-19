@@ -1,0 +1,12 @@
+data:
+  name: 'scenecity_dataset'
+  dataset: 'scenecity'  # 'coco' 'hpatches'
+  alteration: 'all'  # 'all' 'i' 'v'
+  preprocessing:
+    resize: [240, 320]  # [240, 320] for HPatches and False for coco
+    factor: 0.25
+
+front_end_model: 'UnSuperPoint'
+
+testing:
+  workers_test: 1

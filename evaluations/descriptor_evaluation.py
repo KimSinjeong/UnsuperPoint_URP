@@ -159,9 +159,6 @@ def compute_homography(data, keep_k_points=300, correctness_thresh=3, orb=False,
             'mean_dist': mean_dist
             }
 
-
-
-
 def homography_estimation(exper_name, keep_k_points=1000,
                           correctness_thresh=3, orb=False):
     """
@@ -198,3 +195,53 @@ def get_homography_matches(exper_name, keep_k_points=1000,
         output['image2'] = data['warped_image']
         outputs.append(output)
     return outputs
+
+def fundamental_estimation(F, shape = [240, 320], scale=8):
+
+    def epipoliney(x, formula):
+        # TODO: Make this function works with many lines
+        '''
+        :param x:
+        :param formula:
+        :return:
+        '''
+        array = formula.flatten()
+        a = array[0]
+        b = array[1]
+        c = array[2]
+        return int((-c - a * x) / b)
+    
+    def epipolinex(y, formula):
+        # TODO: Make this function works with many lines
+        '''
+        :param y:
+        :param formula:
+        :return:
+        '''
+        array = formula.flatten()
+        a = array[0]
+        b = array[1]
+        c = array[2]
+        return int((b * y + c) / (-a))
+
+    pts = np.random.rand(2, int(shape[0]/scale), int(shape[1]/scale))
+    for i in range(pts.shape[1]):
+        pts[0,:,i] = (i + pts[0,:,i]) * scale
+    for i in range(pts.shape[0]):
+        pts[1,i,:] = (i + pts[1,i,:]) * scale
+    
+    length = int(shape[0]/scale)*int(shape[1]/scale)
+    pts = np.concatenate([np.reshape(pts, (2, -1)), np.ones((1, length))], axis=0)
+    
+    lines = np.dot(F, pts)
+    y_0 = epipoliney(0, lines)
+    y_1 = epipoliney(shape[1], lines)
+    x_0 = epipolinex(0, lines)
+    x_1 = epipolinex(shape[0], lines)
+    h0 = (y_0 >= 0) * (shape[0] > y_0)
+    h1 = (y_1 >= 0) * (shape[0] > y_1)
+    w0 = (x_0 >= 0) * (shape[1] > x_0)
+    w1 = (x_1 >= 0) * (shape[1] > x_1)
+
+    set1 = pts[:,np.logical_xor(b0 + b1, diffs)]
+    

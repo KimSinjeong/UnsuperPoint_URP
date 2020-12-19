@@ -297,3 +297,78 @@ def compute_repeatability(data, keep_k_points=300,
         print("Average number of points in the second image: " + str(np.mean(N2s)))
     # return np.mean(repeatability)
     return repeatability, localization_err
+
+def getFundamentalInliers(matches, F, epi=5e-4, verbose=False):
+    """
+    input:
+        matches: numpy (n, 4(x1, y1, x2, y2))
+        H (ground truth homography): numpy (3, 3)
+    """
+    keypoints = np.append(matches[:, :2], np.ones((matches[:, :2].shape[0], 1)), axis=1)
+    warped_keypoints = np.append(matches[:, 2:4], np.ones((matches[:, 2:4].shape[0], 1)), axis=1)
+
+    # compute point-epiline distance
+    XFX = np.einsum('ij,ij->i', warped_keypoints, np.dot(keypoints, F.T))
+    absolute = np.abs(XFX)
+
+    inliers = absolute < epi
+    if verbose:
+        print("Total matches: ", inliers.shape[0], ", inliers: ", inliers.sum(),
+                            ", percentage: ", inliers.sum() / inliers.shape[0])
+
+    return inliers
+
+def fundamental_repeatability(data, distance_thresh=5e-4, verbose=False):
+    """
+    Compute the repeatability. The experiment must contain in its output the prediction
+    on 2 images, an original image and a warped version of it, plus the homography
+    linking the 2 images.
+    """
+
+    localization_err = -1
+    repeatability = []
+    # for path in paths:
+    # data = np.load(path)
+    shape = data['image'].shape
+    F = data['fundamental']
+
+    keypoints = data['prob']
+    warped_keypoints = data['warped_prob']
+
+    keypoints = np.append(keypoints[:,:2], np.ones((keypoints.shape[0], 1)), axis=1)
+    warped_keypoints = np.append(warped_keypoints[:,:2], np.ones((warped_keypoints.shape[0], 1)), axis=1)
+
+    XFX = np.dot(warped_keypoints, np.dot(F, keypoints.T))
+    absolute = np.abs(XFX)
+    print(F)
+
+    # Compute the repeatability
+    N1 = XFX.shape[0]
+    N2 = XFX.shape[1]
+
+    count1 = 0
+    count2 = 0
+    local_err1, local_err2 = None, None
+    if N2 != 0:
+        min1 = np.min(absolute, axis=1)
+        count1 = np.sum(min1 <= distance_thresh)
+        local_err1 = min1[min1 <= distance_thresh]
+    if N1 != 0:
+        min2 = np.min(absolute, axis=0)
+        count2 = np.sum(min2 <= distance_thresh)
+        local_err2 = min2[min2 <= distance_thresh]
+
+    if N1 + N2 > 0:
+        # repeatability.append((count1 + count2) / (N1 + N2))
+        repeatability = (count1 + count2) / (N1 + N2)
+    if count1 + count2 > 0:
+        localization_err = 0
+        if local_err1 is not None:
+            localization_err += (local_err1.sum())/ (count1 + count2)
+        if local_err2 is not None:
+            localization_err += (local_err2.sum())/ (count1 + count2)
+    else:
+        repeatability = 0
+
+    # return np.mean(repeatability)
+    return repeatability, localization_err
